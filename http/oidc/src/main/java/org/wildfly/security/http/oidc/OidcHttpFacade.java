@@ -202,6 +202,12 @@ public class OidcHttpFacade {
                 return request.getRequestMethod();
             }
 
+
+            @Override
+            public URI getActualURI() {
+                return request.getRequestURI();
+            }
+
             @Override
             public String getURI() {
                 try {
@@ -498,6 +504,9 @@ public class OidcHttpFacade {
     public interface Request {
 
         String getMethod();
+
+        URI getActualURI();
+
         /**
          * Full request URI with query params
          *

@@ -23,7 +23,10 @@ import static org.wildfly.security.http.oidc.ElytronMessages.log;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.UnknownHostException;
+import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
 import java.util.UUID;
@@ -32,7 +35,9 @@ import java.util.regex.Pattern;
 
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
+import org.apache.http.NameValuePair;
 import org.apache.http.client.methods.HttpRequestBase;
+import org.apache.http.client.utils.URIBuilder;
 import org.jose4j.jws.AlgorithmIdentifiers;
 import org.wildfly.security.jose.util.JsonSerialization;
 
@@ -314,6 +319,20 @@ public class Oidc {
 
     public static String getQueryParamValue(OidcHttpFacade facade, String paramName) {
         return facade.getRequest().getQueryParamValue(paramName);
+    }
+
+    protected static URI stripQueryParam(URI uri, String name) throws URISyntaxException {
+        URIBuilder builder = new URIBuilder(uri);
+        List<NameValuePair> params = builder.getQueryParams();
+        builder.clearParameters();
+
+        for(NameValuePair param: params) {
+            if(!name.equals(param.getName())) {
+                builder.setParameter(param.getName(), param.getValue());
+            }
+        }
+
+        return builder.build();
     }
 
     protected static String stripQueryParam(String url, String paramName){

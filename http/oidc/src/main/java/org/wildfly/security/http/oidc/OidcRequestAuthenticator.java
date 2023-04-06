@@ -41,6 +41,7 @@ import static org.wildfly.security.http.oidc.Oidc.stripQueryParam;
 
 import java.io.IOException;
 import java.net.MalformedURLException;
+import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
@@ -120,6 +121,10 @@ public class OidcRequestAuthenticator {
         this.strippedOauthParametersRequestUri = strippedOauthParametersRequestUri;
     }
 
+    protected URI getRequestURI() {
+        return facade.getRequest().getActualURI();
+    }
+
     protected String getRequestUrl() {
         return facade.getRequest().getURI();
     }
@@ -147,8 +152,8 @@ public class OidcRequestAuthenticator {
     }
 
     protected String getRedirectUri(String state) {
-        String url = getRequestUrl();
-        log.debugf("callback uri: %s", url);
+        URI uri = getRequestURI();
+        log.debugf("callback uri: %s", uri.toString());
 
         try {
             if (! facade.getRequest().isSecure() && deployment.getSSLRequired().isRequired(facade.getRequest().getRemoteAddr())) {
@@ -157,11 +162,11 @@ public class OidcRequestAuthenticator {
                     // disabled?
                     return null;
                 }
-                URIBuilder uriBuilder = new URIBuilder(url).setScheme("https");
+                URIBuilder uriBuilder = new URIBuilder(uri).setScheme("https");
                 if (port != 443) {
                     uriBuilder.setPort(port);
                 }
-                url = uriBuilder.build().toString();
+                uri = uriBuilder.build();
             }
 
             List<String> forwardableQueryParams = Arrays.asList(LOGIN_HINT, DOMAIN_HINT, KC_IDP_HINT, PROMPT, MAX_AGE, UI_LOCALES, SCOPE);
@@ -174,7 +179,7 @@ public class OidcRequestAuthenticator {
                 if (paramValue != null && !paramValue.isEmpty()) {
                     forwardedQueryParams.add(new BasicNameValuePair(paramName, paramValue));
                 }
-                url = stripQueryParam(url, paramName);
+                uri = stripQueryParam(uri, paramName);
             }
 
             if (deployment.getAuthUrl() == null) {
@@ -183,7 +188,7 @@ public class OidcRequestAuthenticator {
             URIBuilder redirectUriBuilder = new URIBuilder(deployment.getAuthUrl())
                     .addParameter(RESPONSE_TYPE, CODE)
                     .addParameter(CLIENT_ID, deployment.getResourceName())
-                    .addParameter(REDIRECT_URI, rewrittenRedirectUri(url))
+                    .addParameter(REDIRECT_URI, rewrittenRedirectUri(uri))
                     .addParameter(STATE, state);
             redirectUriBuilder.addParameters(forwardedQueryParams);
             return redirectUriBuilder.build().toString();
@@ -318,9 +323,10 @@ public class OidcRequestAuthenticator {
         if (challenge != null) return challenge;
 
         AccessAndIDTokenResponse tokenResponse;
-        strippedOauthParametersRequestUri = rewrittenRedirectUri(stripOauthParametersFromRedirect(facade.getRequest().getURI()));
 
         try {
+            strippedOauthParametersRequestUri = rewrittenRedirectUri(stripOauthParametersFromRedirect(facade.getRequest().getActualURI()));
+
             tokenResponse = ServerRequest.invokeAccessCodeToToken(deployment, code, strippedOauthParametersRequestUri);
         } catch (ServerRequest.HttpFailure failure) {
             log.error("failed to turn code into token");
@@ -330,7 +336,7 @@ public class OidcRequestAuthenticator {
             }
             return challenge(HttpStatus.SC_FORBIDDEN, AuthenticationError.Reason.CODE_TO_TOKEN_FAILURE, null);
 
-        } catch (IOException e) {
+        } catch (IOException | URISyntaxException e) {
             log.error("failed to turn code into token", e);
             return challenge(HttpStatus.SC_FORBIDDEN, AuthenticationError.Reason.CODE_TO_TOKEN_FAILURE, null);
         }
@@ -366,16 +372,27 @@ public class OidcRequestAuthenticator {
         return null;
     }
 
+    private static URI stripOauthParametersFromRedirect(URI uri) throws URISyntaxException {
+        uri = stripQueryParam(uri, CODE);
+        uri = stripQueryParam(uri, STATE);
+        return stripQueryParam(uri, SESSION_STATE);
+    }
+
     private static String stripOauthParametersFromRedirect(String uri) {
         uri = stripQueryParam(uri, CODE);
         uri = stripQueryParam(uri, STATE);
         return stripQueryParam(uri, SESSION_STATE);
     }
 
-    private String rewrittenRedirectUri(String originalUri) {
+    private String rewrittenRedirectUri(URI originalUri) {
         Map<String, String> rewriteRules = deployment.getRedirectRewriteRules();
+        if (rewriteRules == null || rewriteRules.isEmpty()) {
+            log.debug("Returning original URI: " + originalUri.toString());
+
+            return originalUri.toString();
+        }
         try {
-            URL url = new URL(originalUri);
+            URL url = originalUri.toURL();
             Map.Entry<String, String> rule = null;
             if (rewriteRules != null && ! rewriteRules.isEmpty()) {
                 rule =  rewriteRules.entrySet().iterator().next();
@@ -386,6 +403,9 @@ public class OidcRequestAuthenticator {
                 redirectUriBuilder.append(url.getPath().replaceFirst(rule.getKey(), rule.getValue()));
             } else {
                 redirectUriBuilder.append(url.getPath());
+            }
+            if(url.getQuery()!=null && !url.getQuery().isEmpty()) {
+                redirectUriBuilder.append("?").append(url.getQuery());
             }
             return redirectUriBuilder.toString();
         } catch (MalformedURLException ex) {
